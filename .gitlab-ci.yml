@@ -1,0 +1,147 @@
+# This example shows how to run across multiple platforms
+# using common sections that are executed by both platforms.
+# These common sections of code are accessed using the extends 
+# gitlab-ci keyword.  It also shows dependencies and allows
+# other jobs to continue even if one of the paths fails.
+stages:
+  - build
+  - test
+  
+.project_activation: &project_activation
+  # Will ensure that the CI pipeline will 'only' run when initiated via the
+  # the web GUI (CI / CD -> Pipelines -> Run Pipeline).
+  only:
+    - web
+
+# Set up these general platform 1 shell runner arguments
+# We can use this section in multiple jobs below  
+.runner_platform1_shell: &runner_platform1_shell
+  tags:
+    - SLES12
+    - shell
+    - anl-theta-xeon-001     
+    - cray-xc40     
+    - ecp-theta     
+    - ecp     
+    - test
+
+# Set up these general platform 2 batch runner arguments
+# We can use this section in multiple jobs below
+.runner_platform2_batch: &runner_platform2_batch
+  # We are leveraging the GitLab Batch runner and as
+  # such we will need to provide the job submission parameters.
+  variables:
+    SCHEDULER_PARAMETERS: "-A Operations -n 1  -t 10 -q default"
+  tags:
+    - CLE
+    - batch
+    - anl-theta-knl-001     
+    - cray-xc40     
+    - ecp-theta     
+    - ecp     
+    - cobalt     
+    - test
+
+# Execute this code section before running the other
+# jobs/stages
+before_script:
+  - export TERM=xterm
+  - source $HOME/spack/share/spack/setup-env.sh
+
+# Share this common section of code across jobs/machines
+.build_spack_stage:
+  stage: build
+  script:
+    - spack --version
+    - spack env create myciminiqmc || echo "Spack env myciminiqmc already created"
+    - spack env list
+    - spack env activate myciminiqmc
+    - spack env status
+    - spack install miniqmc^cmake@3.6.0 ^mpich os=cnl6 target=knl
+    - ls -lastr $HOME/spack/var/spack/environments/myciminiqmc
+    - spack env status
+    - spack env deactivate
+    - spack env status
+    - spack env create myopenspeedshop || echo "Spack env myopenspeedshop already created"
+    - spack env list
+    - spack env activate myopenspeedshop
+    - spack env status
+    - module unload PrgEnv-intel
+    - spack install openspeedshop %gcc@7.3.0 +cuda+mpich ^cmake@3.6.0 os=sles12 target=x86_64
+    - ls -lastr $HOME/spack/var/spack/environments/myopenspeedshop
+
+# Share this common section of code across jobs/machines
+.test_spack_stage: 
+  stage: test
+  script:
+    - pwd
+    - source $HOME/spack/share/spack/setup-env.sh
+    - module avail
+    - hostname
+    - spack env list
+    - spack env activate myciminiqmc
+    - spack env status
+    - ls -lastr $HOME/spack/var/spack/environments/myciminiqmc
+    - spack find
+    - which miniqmc
+    - which aprun
+    #- aprun -np 2 miniqmc < ./input_args
+    - spack env list
+    - spack env create myopenspeedshop || echo "Spack env myopenspeedshop already created"     
+    - spack env list     
+    - spack env activate myopenspeedshop     
+
+    # If you need to load the module associated with the package you are     
+    # building.  This code will load the package's module for you     
+    - spack module tcl find --full-path openspeedshop > /tmp/openspeedshop_module     
+    - while read line; do echo $line; module load $line; done < /tmp/openspeedshop_module     
+
+    - module list
+    #- osspcsamp "aprun -n 2 `which miniqmc` < ./input_args"
+
+# Use shared .build_spack_stage code and project activation code
+# Build on platform 1 - shell executor by extending the common shared .build_spack_stage code
+# Also funnel in the project activation settings and the tags/variables for the platform
+build_spack_shell:
+  extends: .build_spack_stage
+  <<: *runner_platform1_shell
+  <<: *project_activation
+  # Because this job may not be the last one executed, allow it to fail so the others can still run
+  allow_failure: true
+
+
+# Use shared .build_spack_stage code and project activation code
+# Build on platform2 - batch executor by extending the common shared .build_spack_stage code
+# Also funnel in the project activation settings and the tags/variables for the platform
+build_spack_batch:
+  extends: .build_spack_stage
+  <<: *runner_platform2_batch
+  <<: *project_activation
+  # Because this job may not be the last one executed, allow it to fail so the others can still run
+  allow_failure: true
+
+
+# Use shared .test_spack_stage code and project activation code
+# Test on platform1 - shell executor by extending the common shared .test_spack_stage code
+# Also funnel in the project activation settings and the tags/variables for the platform
+test_spack_shell:
+  extends: .test_spack_stage
+  <<: *runner_platform1_shell
+  <<: *project_activation
+  dependencies:
+    - build_spack_shell
+  # Because this job may not be the last one executed, allow it to fail so the others can still run
+  allow_failure: true
+
+
+# Use shared .test_spack_stage code and project activation code
+# Test on platform2 - batch executor by extending the common shared .test_spack_stage code
+# Also funnel in the project activation settings and the tags/variables for the platform
+test_spack_batch:
+  extends: .test_spack_stage
+  <<: *runner_platform2_batch
+  <<: *project_activation
+  dependencies:
+    - build_spack_batch
+  # Because this job may not be the last one executed, allow it to fail so the others can still run
+  allow_failure: true
