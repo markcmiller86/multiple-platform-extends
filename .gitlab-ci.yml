@@ -3,6 +3,9 @@
 # These common sections of code are accessed using the extends 
 # gitlab-ci keyword.  It also shows dependencies and allows
 # other jobs to continue even if one of the paths fails.
+# This example is setup to run at ALCF.  To run elsewhere please
+# change the tags and any variable settings to fit with your 
+# gitlab-ci environment.
 stages:
   - build
   - test
